@@ -47,7 +47,7 @@ except ImportError:
     except ImportError:
         class AgentType: ... 
 
-from langchain.chains import RetrievalQA
+from langchain.chain import RetrievalQA
 from langchain.schema import Document
 from langchain.text_splitter import RecursiveCharacterTextSplitter
 from langchain.tools import StructuredTool
