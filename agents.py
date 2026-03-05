@@ -134,7 +134,7 @@ class ApiKeyPool:
 
 key_pool = ApiKeyPool()
 
-DEFAULT_MODEL = "gemini-2.5-flash-preview-04-17"
+DEFAULT_MODEL = "gemini-2.5-flash"
 
 
 def get_llm(temperature=0.1):
