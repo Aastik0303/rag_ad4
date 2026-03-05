@@ -38,7 +38,14 @@ import numpy as np
 import pandas as pd
 
 # ── LangChain ──────────────────────────────────────────────────────────────────
-from langchain.agents import create_agent,AgentType
+from langchain.agents import create_agent
+try:
+    from langchain.agents import AgentType          # old location
+except ImportError:
+    try:
+        from langchain.agents.agent_types import AgentType  # moved location
+    except ImportError:
+        class AgentType: ... 
 
 from langchain.chains import RetrievalQA
 from langchain.schema import Document
