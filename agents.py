@@ -91,7 +91,7 @@ except ImportError:
 # SECTION 1 — API KEY POOL
 # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 
-DEFAULT_MODEL       = "gemini-2.5-flash-preview-04-17"
+DEFAULT_MODEL       = "gemini-2.5-flash"
 EMBED_MODEL         = "models/embedding-001"
 CHUNK_SIZE          = 1000
 CHUNK_OVERLAP       = 200
