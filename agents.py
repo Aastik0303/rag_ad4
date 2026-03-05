@@ -790,7 +790,7 @@ class DataAnalysisAgent:
       lang_pat = re.escape(lang.lower()) if lang else r"\w*"
       m = re.search(r"```(?:" + lang_pat + r")?...", ...)
                 
-    return m.group(1).strip() if m else text.strip()
+      return m.group(1).strip() if m else text.strip()
 
 def _code_strip(text):
     return re.sub(r"```(?:\w+)?[\n\r]?.*?```", "", text, flags=re.DOTALL).strip()
