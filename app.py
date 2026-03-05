@@ -193,7 +193,7 @@ pre { background:#060a12 !important; border:1px solid #1e3a5f !important; border
 # Add all your Gemini API keys here. The pool picks one randomly on startup,
 # then rotates via random.choice when a key is exhausted or rate-limited.
 API_KEYS = [
-    "AIzaSyBqYgBLfuGBgNvTE5NJH6vuxDB5DTKWpfQ",
+    "AIzaSyAhMYNC_8FLE-q0N8OyfptD67eFwJvglVM",
     # "AIzaSy...",   ← add more keys here
     # "AIzaSy...",
 ]
