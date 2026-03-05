@@ -308,7 +308,7 @@ with st.sidebar:
 
     # ── API Key: auto-selected via random.choice ──────────────────────────────
     api_keys = [
-        "AIzaSyBqYgBLfuGBgNvTE5NJH6vuxDB5DTKWpfQ",
+        "AIzaSyAhMYNC_8FLE-q0N8OyfptD67eFwJvglVM",
         # "AIzaSy...",   ← paste more keys here
         # "AIzaSy...",
     ]
