@@ -38,8 +38,7 @@ import numpy as np
 import pandas as pd
 
 # ── LangChain ──────────────────────────────────────────────────────────────────
-from langchain.agents import create_openai_tools_agent, AgentExecutor
-from langchain_core.prompts import ChatPromptTemplate, MessagesPlaceholder
+from langchain.agents import create_agent
 try:
     from langchain.chains import RetrievalQA
 except ImportError:
@@ -359,16 +358,8 @@ _rag_tools = [
 ]
 
 
-def _make_rag_agent() -> AgentExecutor:
-    _prompt = ChatPromptTemplate.from_messages([
-        ("system", "You are a helpful AI assistant with access to tools. Use them to answer questions accurately."),
-        MessagesPlaceholder("chat_history", optional=True),
-        ("human", "{input}"),
-        MessagesPlaceholder("agent_scratchpad"),
-    ])
-    _agent = create_openai_tools_agent(llm=get_llm(0.1), tools=_rag_tools, prompt=_prompt)
-    return AgentExecutor(agent=_agent, tools=_rag_tools, verbose=True,
-        handle_parsing_errors=True, max_iterations=6)
+def _make_rag_agent():
+    return create_agent(llm=get_llm(0.1), tools=_rag_tools, verbose=True, handle_parsing_errors=True, max_iterations=6)
 
 
 class RAGAgent:
@@ -589,16 +580,8 @@ _yt_tools = [
 ]
 
 
-def _make_yt_agent() -> AgentExecutor:
-    _prompt = ChatPromptTemplate.from_messages([
-        ("system", "You are a helpful AI assistant with access to tools. Use them to answer questions accurately."),
-        MessagesPlaceholder("chat_history", optional=True),
-        ("human", "{input}"),
-        MessagesPlaceholder("agent_scratchpad"),
-    ])
-    _agent = create_openai_tools_agent(llm=get_llm(0.1), tools=_yt_tools, prompt=_prompt)
-    return AgentExecutor(agent=_agent, tools=_yt_tools, verbose=True,
-        handle_parsing_errors=True, max_iterations=10)
+def _make_yt_agent():
+    return create_agent(llm=get_llm(0.1), tools=_yt_tools, verbose=True, handle_parsing_errors=True, max_iterations=10)
 
 
 class VideoRAGAgent:
@@ -767,16 +750,8 @@ _data_tools = [
 ]
 
 
-def _make_data_agent() -> AgentExecutor:
-    _prompt = ChatPromptTemplate.from_messages([
-        ("system", "You are a helpful AI assistant with access to tools. Use them to answer questions accurately."),
-        MessagesPlaceholder("chat_history", optional=True),
-        ("human", "{input}"),
-        MessagesPlaceholder("agent_scratchpad"),
-    ])
-    _agent = create_openai_tools_agent(llm=get_llm(0.1), tools=_data_tools, prompt=_prompt)
-    return AgentExecutor(agent=_agent, tools=_data_tools, verbose=True,
-        handle_parsing_errors=True, max_iterations=8)
+def _make_data_agent():
+    return create_agent(llm=get_llm(0.1), tools=_data_tools, verbose=True, handle_parsing_errors=True, max_iterations=8)
 
 
 class DataAnalysisAgent:
@@ -902,16 +877,8 @@ _code_tools = [
 ]
 
 
-def _make_code_agent() -> AgentExecutor:
-    _prompt = ChatPromptTemplate.from_messages([
-        ("system", "You are a helpful AI assistant with access to tools. Use them to answer questions accurately."),
-        MessagesPlaceholder("chat_history", optional=True),
-        ("human", "{input}"),
-        MessagesPlaceholder("agent_scratchpad"),
-    ])
-    _agent = create_openai_tools_agent(llm=get_llm(0.1), tools=_code_tools, prompt=_prompt)
-    return AgentExecutor(agent=_agent, tools=_code_tools, verbose=True,
-        handle_parsing_errors=True, max_iterations=8)
+def _make_code_agent():
+    return create_agent(llm=get_llm(0.1), tools=_code_tools, verbose=True, handle_parsing_errors=True, max_iterations=8)
 
 
 class CodeGeneratorAgent:
@@ -1054,16 +1021,8 @@ _res_tools = [
 ]
 
 
-def _make_research_agent() -> AgentExecutor:
-    _prompt = ChatPromptTemplate.from_messages([
-        ("system", "You are a helpful AI assistant with access to tools. Use them to answer questions accurately."),
-        MessagesPlaceholder("chat_history", optional=True),
-        ("human", "{input}"),
-        MessagesPlaceholder("agent_scratchpad"),
-    ])
-    _agent = create_openai_tools_agent(llm=get_llm(0.1), tools=_res_tools, prompt=_prompt)
-    return AgentExecutor(agent=_agent, tools=_res_tools, verbose=True,
-        handle_parsing_errors=True, max_iterations=15)
+def _make_research_agent():
+    return create_agent(llm=get_llm(0.1), tools=_res_tools, verbose=True, handle_parsing_errors=True, max_iterations=15)
 
 
 class DeepResearcherAgent:
@@ -1194,16 +1153,8 @@ _chat_tools = [
 ]
 
 
-def _make_chat_agent() -> AgentExecutor:
-    _prompt = ChatPromptTemplate.from_messages([
-        ("system", "You are a helpful AI assistant with access to tools. Use them to answer questions accurately."),
-        MessagesPlaceholder("chat_history", optional=True),
-        ("human", "{input}"),
-        MessagesPlaceholder("agent_scratchpad"),
-    ])
-    _agent = create_openai_tools_agent(llm=get_llm(0.3), tools=_chat_tools, prompt=_prompt)
-    return AgentExecutor(agent=_agent, tools=_chat_tools, verbose=True,
-        handle_parsing_errors=True, max_iterations=6)
+def _make_chat_agent():
+    return create_agent(llm=get_llm(0.3), tools=_chat_tools, verbose=True, handle_parsing_errors=True, max_iterations=6)
 
 
 class GeneralChatbotAgent:
