@@ -1,6 +1,6 @@
 # Core
 streamlit
-langchain>=0.1.20,<0.2.0
+langchain
 langchain-google-genai
 langchain-community
 langchain-core
