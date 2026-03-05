@@ -38,19 +38,34 @@ import numpy as np
 import pandas as pd
 
 # ── LangChain ──────────────────────────────────────────────────────────────────
-from langchain.agents import create_agent
+from langchain.agents import initialize_agent, AgentExecutor
 try:
-    from langchain.agents import AgentType          # old location
+    from langchain.agents import AgentType
 except ImportError:
     try:
-        from langchain.agents.agent_types import AgentType  # moved location
+        from langchain.agents.agent_types import AgentType
     except ImportError:
-        class AgentType: ... 
-
-from langchain.chains import RetrievalQA
-from langchain.schema import Document
-from langchain.text_splitter import RecursiveCharacterTextSplitter
-from langchain.tools import StructuredTool
+        # LangChain 0.2+ — define the string value directly
+        class AgentType:
+            STRUCTURED_CHAT_ZERO_SHOT_REACT_DESCRIPTION = "structured-chat-zero-shot-react-description"
+            ZERO_SHOT_REACT_DESCRIPTION = "zero-shot-react-description"
+            OPENAI_FUNCTIONS = "openai-functions"
+try:
+    from langchain.chains import RetrievalQA
+except ImportError:
+    from langchain_community.chains import RetrievalQA
+try:
+    from langchain.schema import Document
+except ImportError:
+    from langchain_core.documents import Document
+try:
+    from langchain.text_splitter import RecursiveCharacterTextSplitter
+except ImportError:
+    from langchain_text_splitters import RecursiveCharacterTextSplitter
+try:
+    from langchain.tools import StructuredTool
+except ImportError:
+    from langchain_core.tools import StructuredTool
 from langchain_core.messages import HumanMessage, AIMessage
 from langchain_community.vectorstores import FAISS
 from langchain_community.document_loaders import (
@@ -355,7 +370,7 @@ _rag_tools = [
 
 
 def _make_rag_agent() -> AgentExecutor:
-    return create_agent(tools=_rag_tools, llm=get_llm(0.1),
+    return initialize_agent(tools=_rag_tools, llm=get_llm(0.1),
         agent=AgentType.STRUCTURED_CHAT_ZERO_SHOT_REACT_DESCRIPTION,
         verbose=True, handle_parsing_errors=True, max_iterations=6)
 
@@ -579,7 +594,7 @@ _yt_tools = [
 
 
 def _make_yt_agent() -> AgentExecutor:
-    return create_agent(tools=_yt_tools, llm=get_llm(0.1),
+    return initialize_agent(tools=_yt_tools, llm=get_llm(0.1),
         agent=AgentType.STRUCTURED_CHAT_ZERO_SHOT_REACT_DESCRIPTION,
         verbose=True, handle_parsing_errors=True, max_iterations=10)
 
@@ -751,7 +766,7 @@ _data_tools = [
 
 
 def _make_data_agent() -> AgentExecutor:
-    return create_agent(tools=_data_tools, llm=get_llm(0.1),
+    return initialize_agent(tools=_data_tools, llm=get_llm(0.1),
         agent=AgentType.STRUCTURED_CHAT_ZERO_SHOT_REACT_DESCRIPTION,
         verbose=True, handle_parsing_errors=True, max_iterations=8)
 
@@ -793,11 +808,11 @@ class DataAnalysisAgent:
 # SECTION 8 — CODE GENERATOR AGENT
 # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 
-    def _code_extract(text, lang=""): 
-      lang_pat = re.escape(lang.lower()) if lang else r"\w*"
-      m = re.search(r"```(?:" + lang_pat + r")?...", ...)
-                
-      return m.group(1).strip() if m else text.strip()
+def _code_extract(text, lang=""):
+    lang_pat = re.escape(lang.lower()) if lang else r"\w*"
+    m = re.search(r"```(?:" + lang_pat + r")?[\n\r]?(.*?)```",
+                  text, re.DOTALL | re.IGNORECASE)
+    return m.group(1).strip() if m else text.strip()
 
 def _code_strip(text):
     return re.sub(r"```(?:\w+)?[\n\r]?.*?```", "", text, flags=re.DOTALL).strip()
@@ -880,7 +895,7 @@ _code_tools = [
 
 
 def _make_code_agent() -> AgentExecutor:
-    return create_agent(tools=_code_tools, llm=get_llm(0.1),
+    return initialize_agent(tools=_code_tools, llm=get_llm(0.1),
         agent=AgentType.STRUCTURED_CHAT_ZERO_SHOT_REACT_DESCRIPTION,
         verbose=True, handle_parsing_errors=True, max_iterations=8)
 
@@ -1026,7 +1041,7 @@ _res_tools = [
 
 
 def _make_research_agent() -> AgentExecutor:
-    return create_agent(tools=_res_tools, llm=get_llm(0.1),
+    return initialize_agent(tools=_res_tools, llm=get_llm(0.1),
         agent=AgentType.STRUCTURED_CHAT_ZERO_SHOT_REACT_DESCRIPTION,
         verbose=True, handle_parsing_errors=True, max_iterations=15)
 
@@ -1160,7 +1175,7 @@ _chat_tools = [
 
 
 def _make_chat_agent() -> AgentExecutor:
-    return create_agent(tools=_chat_tools, llm=get_llm(0.3),
+    return initialize_agent(tools=_chat_tools, llm=get_llm(0.3),
         agent=AgentType.STRUCTURED_CHAT_ZERO_SHOT_REACT_DESCRIPTION,
         verbose=True, handle_parsing_errors=True, max_iterations=6)
 
