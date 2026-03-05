@@ -38,8 +38,8 @@ import numpy as np
 import pandas as pd
 
 # ── LangChain ──────────────────────────────────────────────────────────────────
-from langchain.agents import create_agent
-from langchain.agents.agent_types import AgentType
+from langchain.agents import create_agent,AgentType
+
 from langchain.chains import RetrievalQA
 from langchain.schema import Document
 from langchain.text_splitter import RecursiveCharacterTextSplitter
