@@ -786,9 +786,10 @@ class DataAnalysisAgent:
 # SECTION 8 — CODE GENERATOR AGENT
 # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 
-def _code_extract(text, lang=""): 
-    m = re.search(rf"```(?:{re.escape(lang.lower()) if lang else r'\w*'})?[\n\r]?(.*?)```",
-                  text, re.DOTALL | re.IGNORECASE)
+    def _code_extract(text, lang=""): 
+      lang_pat = re.escape(lang.lower()) if lang else r"\w*"
+      m = re.search(r"```(?:" + lang_pat + r")?...", ...)
+                
     return m.group(1).strip() if m else text.strip()
 
 def _code_strip(text):
