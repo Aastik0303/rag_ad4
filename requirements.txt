@@ -34,3 +34,7 @@ requests>=2.31.0
 
 # Utilities
 python-dotenv>=1.0.0
+
+# Embeddings (free, no API key needed)
+sentence-transformers>=2.2.0
+langchain-huggingface>=0.0.1
