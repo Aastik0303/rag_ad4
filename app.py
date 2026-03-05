@@ -179,7 +179,7 @@ pre { background:#060a12 !important; border:1px solid #1e3a5f !important; border
 # ── API Keys ──────────────────────────────────────────────────────────────────
 API_KEYS = [
     
-    "AIzaSyBIalS2II3YzPB63i2JeNrf_TYRRT5FYVE"
+    "AIzaSyBON-23gAbhsMXaJ4e2khLyhiN010vOQK4"
 ]
 
 
