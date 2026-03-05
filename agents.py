@@ -40,10 +40,6 @@ import pandas as pd
 # ── LangChain ──────────────────────────────────────────────────────────────────
 from langchain.agents import create_agent
 try:
-    from langchain.chains import RetrievalQA
-except ImportError:
-    from langchain_community.chains import RetrievalQA
-try:
     from langchain.schema import Document
 except ImportError:
     from langchain_core.documents import Document
@@ -294,7 +290,6 @@ def fig_to_base64(fig) -> str:
 
 class _RagState:
     vectorstore = None
-    qa_chain    = None
     sources: List[str] = []
 
 _rag_state = _RagState()
@@ -316,31 +311,21 @@ def _rag_ingest(file_paths: List[str]) -> str:
         return "⚠️ No documents loaded."
     _rag_state.vectorstore = build_vectorstore(docs)
     _rag_state.sources = list({d.metadata.get("source", "?") for d in docs})
-    from langchain.prompts import PromptTemplate
-    qa_prompt = PromptTemplate(
-        template=(
-            "You are a precise document assistant.\n"
-            "Answer ONLY from the context below.\n\n"
-            "Context:\n{context}\n\nQuestion: {question}\n\nAnswer:"
-        ),
-        input_variables=["context", "question"],
-    )
-    _rag_state.qa_chain = RetrievalQA.from_chain_type(
-        llm=get_llm(0.1),
-        chain_type="stuff",
-        retriever=_rag_state.vectorstore.as_retriever(search_kwargs={"k": 5}),
-        chain_type_kwargs={"prompt": qa_prompt},
-        return_source_documents=True,
-    )
     return f"✅ Ingested {len(docs)} chunks from {len(file_paths)} file(s)."
 
 
 def _rag_query(question: str) -> str:
-    if _rag_state.qa_chain is None:
+    if _rag_state.vectorstore is None:
         return json.dumps({"answer": "⚠️ No documents ingested yet.", "sources": []})
-    result  = _rag_state.qa_chain.invoke({"query": question})
-    sources = list({d.metadata.get("source", "?") for d in result.get("source_documents", [])})
-    return json.dumps({"answer": result["result"], "sources": sources})
+    docs    = _rag_state.vectorstore.as_retriever(search_kwargs={"k": 5}).get_relevant_documents(question)
+    context = "\n\n".join(d.page_content for d in docs)
+    sources = list({d.metadata.get("source", "?") for d in docs})
+    prompt  = (
+        "You are a precise document assistant. Answer ONLY from the context below.\n\n"
+        f"Context:\n{context}\n\nQuestion: {question}\n\nAnswer:"
+    )
+    answer = get_llm(0.1).invoke([HumanMessage(content=prompt)]).content
+    return json.dumps({"answer": answer, "sources": sources})
 
 
 def _rag_list_sources() -> str:
