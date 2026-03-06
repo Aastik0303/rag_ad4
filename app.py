@@ -178,8 +178,7 @@ pre { background:#060a12 !important; border:1px solid #1e3a5f !important; border
 
 # ── API Keys ──────────────────────────────────────────────────────────────────
 API_KEYS = [
-    "YOUR_GEMINI_API_KEY_HERE",
-    # "AIzaSy...",   ← add more keys here
+     "AIzaSyBON-23gAbhsMXaJ4e2khLyhiN010vOQK4"
 ]
 
 
