@@ -708,15 +708,14 @@ with tab_ingest:
                 try:
                     msg  = orch.video_rag.ingest(yt_url, language=yt_lang)
                     info = orch.video_rag.get_info()
-                    # Only mark as ready if ingest actually succeeded (no error prefix)
-                    if info.get("indexed") or (msg and not msg.lower().startswith("error")):
+                    if orch.video_rag.is_ready():
                         st.session_state.video_ingested = True
                         st.session_state.video_url_saved = yt_url
                         st.session_state.video_lang_saved = yt_lang
                         st.success(f"✅ {msg}")
                     else:
+                        st.session_state.video_ingested = False
                         st.error(f"❌ {msg}")
-                        st.stop()
                     if info.get("title"):
                         st.markdown(f"""
 <div class="info-card">
