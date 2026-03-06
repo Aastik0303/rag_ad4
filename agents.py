@@ -263,147 +263,237 @@ def _secs(s: float) -> str:
 
 
 class VideoRAGAgent:
+    """
+    YouTube RAG Agent — ported from the proven single-file implementation.
+    Uses YouTubeTranscriptApi.get_transcript() (simplest, most compatible call),
+    yt-dlp for metadata, and FAISS + HuggingFace embeddings for semantic search.
+    """
     name = "YouTube RAG Agent"
 
     def __init__(self):
-        self._vs = None
-        self.video_id = self.video_url = self.title = ""
-        self.channel = self.duration = self.thumbnail = ""
-        self._chunks: List[Dict] = []
-        self._transcript = ""
+        self._vs          = None
+        self._chunks: list = []
+        self._transcript   = ""
+        self.video_id      = ""
+        self.video_url     = ""
+        self.title         = "Unknown"
+        self.channel       = "Unknown"
+        self.duration      = "Unknown"
+        self.thumbnail     = ""
 
-    def _parse_seg(self, seg) -> tuple:
+    # ── helpers ──────────────────────────────────────────────────────────────
+
+    @staticmethod
+    def extract_video_id(url: str):
+        patterns = [
+            r"(?:v=|/)([0-9A-Za-z_-]{11}).*",
+            r"(?:youtu\.be/)([0-9A-Za-z_-]{11})",
+            r"(?:embed/)([0-9A-Za-z_-]{11})",
+        ]
+        for p in patterns:
+            m = re.search(p, url)
+            if m:
+                return m.group(1)
+        return None
+
+    @staticmethod
+    def _secs_to_ts(seconds: float) -> str:
+        s = int(seconds)
+        h, r = divmod(s, 3600)
+        m, sec = divmod(r, 60)
+        return f"{h}:{m:02d}:{sec:02d}" if h else f"{m:02d}:{sec:02d}"
+
+    @staticmethod
+    def _parse_seg(seg) -> tuple:
+        """Handle dict (old api) and object (new api) transcript segments."""
         if isinstance(seg, dict):
             return seg.get("start", 0), seg.get("duration", 0), seg.get("text", "").strip()
         return getattr(seg, "start", 0), getattr(seg, "duration", 0), getattr(seg, "text", "").strip()
 
-    def ingest(self, youtube_url: str, language: str = "en") -> str:
-        # Reset state completely
-        self._vs = None
-        self._chunks = []
-        self._transcript = ""
-
-        # Step 1 — extract video ID
-        try:
-            vid = _yt_id(youtube_url)
-        except ValueError as e:
-            return f"Error: {e}"
-
-        self.video_id  = vid
-        self.video_url = "https://www.youtube.com/watch?v=" + vid
-        self.thumbnail = "https://img.youtube.com/vi/" + vid + "/hqdefault.jpg"
-        self.title     = "YouTube Video (" + vid + ")"
-        self.channel   = "Unknown"
-        self.duration  = "Unknown"
-
-        # Step 2 — get title via oEmbed
+    def _get_metadata(self, video_id: str):
+        """Fetch title/channel via yt-dlp or oEmbed fallback."""
+        if YTDLP_OK:
+            try:
+                opts = {"quiet": True, "no_warnings": True, "skip_download": True}
+                with _yt_dlp.YoutubeDL(opts) as ydl:
+                    info = ydl.extract_info(
+                        "https://www.youtube.com/watch?v=" + video_id, download=False
+                    )
+                self.title    = info.get("title",    "Unknown")
+                self.channel  = info.get("uploader", "Unknown")
+                dur           = info.get("duration", 0)
+                self.duration = self._secs_to_ts(dur) if dur else "Unknown"
+                return
+            except Exception:
+                pass
+        # oEmbed fallback (no auth needed)
         if REQUESTS_OK:
             try:
                 r = _req.get(
-                    "https://www.youtube.com/oembed?url=" + self.video_url + "&format=json",
+                    "https://www.youtube.com/oembed?url=https://www.youtube.com/watch?v="
+                    + video_id + "&format=json",
                     timeout=8
                 )
                 if r.status_code == 200:
-                    meta = r.json()
-                    self.title   = meta.get("title", self.title)
-                    self.channel = meta.get("author_name", "Unknown")
+                    d = r.json()
+                    self.title   = d.get("title",       "Unknown")
+                    self.channel = d.get("author_name", "Unknown")
             except Exception:
                 pass
 
-        # Step 3 — fetch transcript
+    def _fetch_transcript(self, video_id: str, language: str = "en") -> list:
+        """
+        Fetch transcript using the simplest possible call first,
+        then fall back through progressively more complex approaches.
+        Returns list of {start, duration, text} dicts, or [] on failure.
+        """
         if not TRANSCRIPT_OK:
-            return "Error: youtube-transcript-api not installed."
+            return []
 
-        raw_chunks = []
+        raw = []
+
+        # Attempt 1: simple get_transcript (works on v0.x and v1.0+)
         try:
-            tlist = YouTubeTranscriptApi.list_transcripts(vid)
-            transcript_obj = None
-            for attempt in [
+            result = YouTubeTranscriptApi.get_transcript(video_id, languages=[language, "en"])
+            for seg in result:
+                s, d, txt = self._parse_seg(seg)
+                raw.append({"start": float(s), "duration": float(d), "text": str(txt)})
+            if raw:
+                return raw
+        except Exception:
+            pass
+
+        # Attempt 2: instance-based API (v1.0+)
+        try:
+            api    = YouTubeTranscriptApi()
+            result = api.fetch(video_id, languages=[language, "en"])
+            for seg in result:
+                s, d, txt = self._parse_seg(seg)
+                raw.append({"start": float(s), "duration": float(d), "text": str(txt)})
+            if raw:
+                return raw
+        except Exception:
+            pass
+
+        # Attempt 3: list_transcripts (v0.x)
+        try:
+            tlist = YouTubeTranscriptApi.list_transcripts(video_id)
+            t_obj = None
+            for getter in [
                 lambda: tlist.find_manually_created_transcript([language]),
                 lambda: tlist.find_generated_transcript([language]),
                 lambda: tlist.find_manually_created_transcript(["en"]),
                 lambda: tlist.find_generated_transcript(["en"]),
             ]:
-                try:
-                    transcript_obj = attempt()
-                    break
-                except Exception:
-                    continue
-            if transcript_obj is None:
+                try: t_obj = getter(); break
+                except Exception: continue
+            if t_obj is None:
                 all_t = list(tlist)
-                if all_t:
-                    transcript_obj = all_t[0]
-            if transcript_obj is None:
-                return "Error: No transcript available for this video."
+                if all_t: t_obj = all_t[0]
+            if t_obj:
+                for seg in t_obj.fetch():
+                    s, d, txt = self._parse_seg(seg)
+                    raw.append({"start": float(s), "duration": float(d), "text": str(txt)})
+        except Exception:
+            pass
 
-            fetched = transcript_obj.fetch()
-            for seg in fetched:
-                s, d, txt = self._parse_seg(seg)
-                raw_chunks.append({"start": float(s), "duration": float(d), "text": str(txt)})
+        return raw
 
-        except TranscriptsDisabled:
-            return "Error: Transcripts disabled for this video."
-        except Exception as e:
-            return "Error fetching transcript: " + str(e)
-
-        if not raw_chunks:
-            return "Error: Transcript was empty."
-
-        self._chunks = raw_chunks
-
-        # Step 4 — build plain text transcript
-        parts = []
-        for seg in self._chunks:
-            parts.append("[" + _secs(seg["start"]) + "] " + seg["text"])
-        self._transcript = "\n".join(parts)
-
-        # Step 5 — chunk into 60-second windows
+    def _chunks_from_transcript(self, raw: list, chunk_secs: int = 60) -> list:
+        """Group transcript entries into ~chunk_secs windows. Returns list of Document."""
         docs = []
         cur_text, cur_start, cur_end = [], None, 0.0
-        for seg in self._chunks:
+        for seg in raw:
             s, d, txt = seg["start"], seg["duration"], seg["text"]
             if cur_start is None:
                 cur_start = s
             cur_text.append(txt)
             cur_end = s + d
-            if (cur_end - cur_start) >= 60:
+            if (cur_end - cur_start) >= chunk_secs:
+                ts = self._secs_to_ts(cur_start)
                 docs.append(Document(
-                    page_content="[" + _secs(cur_start) + "] " + " ".join(cur_text),
-                    metadata={"start_sec": cur_start, "timestamp": _secs(cur_start), "source": self.video_url}
+                    page_content="[" + ts + "] " + " ".join(cur_text),
+                    metadata={"start_sec": cur_start, "timestamp": ts, "source": self.video_url}
                 ))
                 cur_text, cur_start = [], None
         if cur_text and cur_start is not None:
+            ts = self._secs_to_ts(cur_start)
             docs.append(Document(
-                page_content="[" + _secs(cur_start) + "] " + " ".join(cur_text),
-                metadata={"start_sec": cur_start, "timestamp": _secs(cur_start), "source": self.video_url}
+                page_content="[" + ts + "] " + " ".join(cur_text),
+                metadata={"start_sec": cur_start, "timestamp": ts, "source": self.video_url}
             ))
+        return docs
 
+    # ── public API ────────────────────────────────────────────────────────────
+
+    def ingest(self, youtube_url: str, language: str = "en") -> str:
+        # Reset
+        self._vs = None; self._chunks = []; self._transcript = ""
+        self.title = self.channel = self.duration = "Unknown"
+
+        # Extract video ID
+        vid = self.extract_video_id(youtube_url)
+        if not vid:
+            return "Error: Could not extract video ID from URL."
+
+        self.video_id  = vid
+        self.video_url = "https://www.youtube.com/watch?v=" + vid
+        self.thumbnail = "https://img.youtube.com/vi/" + vid + "/hqdefault.jpg"
+
+        # Metadata
+        self._get_metadata(vid)
+
+        # Transcript
+        raw = self._fetch_transcript(vid, language)
+        if not raw:
+            return "Error: No transcript available for this video (transcripts may be disabled or unavailable)."
+
+        self._chunks = raw
+        self._transcript = "\n".join(
+            "[" + self._secs_to_ts(s["start"]) + "] " + s["text"] for s in raw
+        )
+
+        # Build docs and vectorstore
+        docs = self._chunks_from_transcript(raw)
         if not docs:
-            return "Error: Could not build document chunks from transcript."
+            return "Error: Could not build chunks from transcript."
 
-        # Step 6 — build vectorstore
         try:
             self._vs = build_vectorstore(docs)
         except Exception as e:
             return "Error building index: " + str(e)
 
-        return "Loaded: " + self.title + " | " + str(len(self._chunks)) + " segments | " + str(len(docs)) + " chunks indexed."
+        return (
+            "Loaded: " + self.title
+            + " | " + str(len(raw)) + " segments"
+            + " | " + str(len(docs)) + " chunks indexed."
+        )
 
     def is_ready(self) -> bool:
         return self._vs is not None and len(self._chunks) > 0
 
     def query(self, question: str) -> Dict:
-        if self._vs is None:
-            return {"answer": "⚠️ Video not indexed yet. Please go to the **Ingest** tab, paste a YouTube URL, and click **Load & Index Video** first.", "timestamps": []}
+        if not self.is_ready():
+            return {
+                "answer": "Video not loaded. Please go to the Ingest tab, paste a YouTube URL, and click Load & Index Video.",
+                "timestamps": []
+            }
         docs = self._vs.as_retriever(search_kwargs={"k": 5}).invoke(question)
         context = "\n\n".join(d.page_content for d in docs)
-        timestamps = [{"timestamp": d.metadata.get("timestamp", ""),
-                       "yt_link": f"{self.video_url}&t={int(d.metadata.get('start_sec',0))}s"}
-                      for d in docs]
+        timestamps = [
+            {
+                "timestamp": d.metadata.get("timestamp", ""),
+                "yt_link":  self.video_url + "&t=" + str(int(d.metadata.get("start_sec", 0))) + "s"
+            }
+            for d in docs
+        ]
         answer = llm_call([HumanMessage(content=(
-            f'Video: "{self.title}" by {self.channel}\n\n'
-            f"Transcript:\n{context}\n\n"
-            f"Question: {question}\n\nAnswer with [MM:SS] timestamps:"
+            "You are a helpful YouTube video assistant.\n"
+            "Answer using ONLY the transcript context below. Cite timestamps like [MM:SS] when relevant.\n"
+            "If the answer is not in the context, say so.\n\n"
+            "Video: \"" + self.title + "\" by " + self.channel + "\n\n"
+            "Relevant transcript segments:\n" + context + "\n\n"
+            "Question: " + question + "\n\nAnswer:"
         ))])
         return {"answer": answer, "timestamps": timestamps, "video_url": self.video_url}
 
@@ -411,26 +501,33 @@ class VideoRAGAgent:
         if not self._transcript:
             return {"summary": "No video loaded.", "title": ""}
         excerpt = self._transcript[:12000]
-        instr = {"brief": "Write a brief 3-5 sentence summary.",
-                 "bullets": "List the 10 most important points as bullet points."
-                 }.get(style, "Write a structured summary: Overview, Key Topics, Insights, Conclusion.")
+        instr = {
+            "brief":   "Write a brief 3-5 sentence summary.",
+            "bullets": "List the 10 most important points as bullet points with timestamps.",
+        }.get(style, "Write a structured summary covering: Overview, Key Topics, Main Insights, Conclusion.")
         summary = llm_call([HumanMessage(content=(
-            f'Video: "{self.title}" by {self.channel}\n\nTranscript:\n{excerpt}\n\n{instr}'
+            "Video: \"" + self.title + "\" by " + self.channel + "\n\n"
+            "Transcript:\n" + excerpt + "\n\n" + instr
         ))], temperature=0.2)
         return {"summary": summary, "title": self.title, "channel": self.channel,
                 "video_url": self.video_url, "thumbnail": self.thumbnail}
 
     def get_info(self) -> Dict:
-        return {"video_id": self.video_id, "title": self.title, "channel": self.channel,
-                "duration": self.duration, "video_url": self.video_url, "thumbnail": self.thumbnail,
-                "transcript_segments": len(self._chunks), "indexed": self._vs is not None}
+        return {
+            "video_id":            self.video_id,
+            "title":               self.title,
+            "channel":             self.channel,
+            "duration":            self.duration,
+            "video_url":           self.video_url,
+            "thumbnail":           self.thumbnail,
+            "transcript_segments": len(self._chunks),
+            "indexed":             self._vs is not None,
+        }
 
     @staticmethod
     def is_youtube_url(text: str) -> bool:
-        return bool(re.search(r'(youtube\.com|youtu\.be)', text, re.IGNORECASE))
+        return bool(re.search(r"(youtube\.com|youtu\.be)", text, re.IGNORECASE))
 
-
-# ── DATA ANALYSIS AGENT ───────────────────────────────────────────────────────
 
 class DataAnalysisAgent:
     name = "Data Analysis Agent"
