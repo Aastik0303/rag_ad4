@@ -148,7 +148,6 @@ def get_llm(temperature=0.1):
 
 
 def get_embeddings():
-    # Free HuggingFace model — no API key needed, runs locally
     return HuggingFaceEmbeddings(
         model_name="sentence-transformers/all-MiniLM-L6-v2",
         model_kwargs={"device": "cpu"},
@@ -265,9 +264,9 @@ def _secs(s: float) -> str:
 
 class VideoRAGAgent:
     """
-    YouTube RAG Agent — ported from the proven single-file implementation.
-    Uses YouTubeTranscriptApi.get_transcript() (simplest, most compatible call),
-    yt-dlp for metadata, and FAISS + HuggingFace embeddings for semantic search.
+    YouTube RAG Agent.
+    Transcript fetch tries all available methods silently.
+    If no transcript exists, falls back to AI-generated topic segments — never errors out.
     """
     name = "YouTube RAG Agent"
 
@@ -281,6 +280,7 @@ class VideoRAGAgent:
         self.channel       = "Unknown"
         self.duration      = "Unknown"
         self.thumbnail     = ""
+        self.source_type   = "unknown"   # "transcript" | "ai_generated"
 
     # ── helpers ──────────────────────────────────────────────────────────────
 
@@ -344,64 +344,105 @@ class VideoRAGAgent:
 
     def _fetch_transcript(self, video_id: str, language: str = "en") -> list:
         """
-        Fetch transcript using the simplest possible call first,
-        then fall back through progressively more complex approaches.
-        Returns list of {start, duration, text} dicts, or [] on failure.
+        Try every available method to get a transcript — silently.
+        Returns list of {start, duration, text} dicts, or [] if nothing works.
         """
         if not TRANSCRIPT_OK:
             return []
 
-        raw = []
-
-        # Attempt 1: simple get_transcript (works on v0.x and v1.0+)
-        try:
-            result = YouTubeTranscriptApi.get_transcript(video_id, languages=[language, "en"])
+        def _parse_all(result) -> list:
+            out = []
             for seg in result:
                 s, d, txt = self._parse_seg(seg)
-                raw.append({"start": float(s), "duration": float(d), "text": str(txt)})
-            if raw:
-                return raw
+                if str(txt).strip():
+                    out.append({"start": float(s), "duration": float(d), "text": str(txt).strip()})
+            return out
+
+        # Attempt 1: direct get_transcript with several language variants
+        for lang_list in [[language], ["en"], ["en-US"], ["en-GB"], [language, "en"]]:
+            try:
+                raw = _parse_all(YouTubeTranscriptApi.get_transcript(video_id, languages=lang_list))
+                if raw:
+                    return raw
+            except Exception:
+                continue
+
+        # Attempt 2: instance-based API (youtube-transcript-api >= 1.0)
+        try:
+            api = YouTubeTranscriptApi()
+            for lang_list in [[language, "en"], ["en"], []]:
+                try:
+                    result = api.fetch(video_id, languages=lang_list) if lang_list else api.fetch(video_id)
+                    raw = _parse_all(result)
+                    if raw:
+                        return raw
+                except Exception:
+                    continue
         except Exception:
             pass
 
-        # Attempt 2: instance-based API (v1.0+)
-        try:
-            api    = YouTubeTranscriptApi()
-            result = api.fetch(video_id, languages=[language, "en"])
-            for seg in result:
-                s, d, txt = self._parse_seg(seg)
-                raw.append({"start": float(s), "duration": float(d), "text": str(txt)})
-            if raw:
-                return raw
-        except Exception:
-            pass
-
-        # Attempt 3: list_transcripts (v0.x)
+        # Attempt 3: list all transcripts, sorted by preference, try each
         try:
             tlist = YouTubeTranscriptApi.list_transcripts(video_id)
-            t_obj = None
-            for getter in [
-                lambda: tlist.find_manually_created_transcript([language]),
-                lambda: tlist.find_generated_transcript([language]),
-                lambda: tlist.find_manually_created_transcript(["en"]),
-                lambda: tlist.find_generated_transcript(["en"]),
-            ]:
-                try: t_obj = getter(); break
-                except Exception: continue
-            if t_obj is None:
-                all_t = list(tlist)
-                if all_t: t_obj = all_t[0]
-            if t_obj:
-                for seg in t_obj.fetch():
-                    s, d, txt = self._parse_seg(seg)
-                    raw.append({"start": float(s), "duration": float(d), "text": str(txt)})
+            all_transcripts = list(tlist)
+
+            # Manual transcripts first, then generated; requested language prioritised
+            def _priority(t):
+                lang_match = t.language_code.startswith(language) or t.language_code.startswith("en")
+                return (0 if not t.is_generated else 1, 0 if lang_match else 1)
+
+            all_transcripts.sort(key=_priority)
+
+            for t_obj in all_transcripts:
+                try:
+                    raw = _parse_all(t_obj.fetch())
+                    if raw:
+                        return raw
+                except Exception:
+                    continue
+
+            # Last resort: translate first available to English
+            if all_transcripts:
+                try:
+                    raw = _parse_all(all_transcripts[0].translate("en").fetch())
+                    if raw:
+                        return raw
+                except Exception:
+                    pass
         except Exception:
             pass
 
-        return raw
+        return []
 
-    def _chunks_from_transcript(self, raw: list, chunk_secs: int = 60) -> list:
-        """Group transcript entries into ~chunk_secs windows. Returns list of Document."""
+    def _ai_fallback_chunks(self) -> List[Document]:
+        """
+        When no transcript exists, ask the LLM to generate topic segments
+        from the video title/channel so the agent is still useful.
+        """
+        prompt = (
+            f"You are analysing a YouTube video.\n"
+            f"Title: {self.title}\n"
+            f"Channel: {self.channel}\n\n"
+            "Generate 12 detailed topic segments that likely appear in this video.\n"
+            "Format EACH segment on its own line exactly as:\n"
+            "[Topic N] <one or two sentence description of what this segment covers>\n\n"
+            "Generate 12 segments now:"
+        )
+        response = llm_call([HumanMessage(content=prompt)], temperature=0.3)
+        lines = [l.strip() for l in response.splitlines() if l.strip().startswith("[")]
+        if not lines:
+            lines = [f"[Overview] This video titled '{self.title}' by {self.channel} covers various topics."]
+        docs = []
+        for i, line in enumerate(lines):
+            docs.append(Document(
+                page_content=line,
+                metadata={"start_sec": i * 60, "timestamp": self._secs_to_ts(i * 60),
+                          "source": self.video_url}
+            ))
+        return docs
+
+    def _chunks_from_transcript(self, raw: list, chunk_secs: int = 60) -> List[Document]:
+        """Group transcript entries into ~chunk_secs windows."""
         docs = []
         cur_text, cur_start, cur_end = [], None, 0.0
         for seg in raw:
@@ -428,9 +469,10 @@ class VideoRAGAgent:
     # ── public API ────────────────────────────────────────────────────────────
 
     def ingest(self, youtube_url: str, language: str = "en") -> str:
-        # Reset
+        # Reset state
         self._vs = None; self._chunks = []; self._transcript = ""
         self.title = self.channel = self.duration = "Unknown"
+        self.source_type = "unknown"
 
         # Extract video ID
         vid = self.extract_video_id(youtube_url)
@@ -441,23 +483,30 @@ class VideoRAGAgent:
         self.video_url = "https://www.youtube.com/watch?v=" + vid
         self.thumbnail = "https://img.youtube.com/vi/" + vid + "/hqdefault.jpg"
 
-        # Metadata
+        # Metadata (always works — has oEmbed fallback)
         self._get_metadata(vid)
 
-        # Transcript
+        # Transcript — try all methods silently
         raw = self._fetch_transcript(vid, language)
-        if not raw:
-            return "Error: No transcript available for this video (transcripts may be disabled or unavailable)."
 
-        self._chunks = raw
-        self._transcript = "\n".join(
-            "[" + self._secs_to_ts(s["start"]) + "] " + s["text"] for s in raw
-        )
+        if raw:
+            # Real transcript path
+            self._chunks = raw
+            self._transcript = "\n".join(
+                "[" + self._secs_to_ts(s["start"]) + "] " + s["text"] for s in raw
+            )
+            docs = self._chunks_from_transcript(raw)
+            self.source_type = "transcript"
+            source_note = f"{len(raw)} transcript segments"
+        else:
+            # AI-generated fallback — no error, just different source
+            docs = self._ai_fallback_chunks()
+            self._transcript = "\n".join(d.page_content for d in docs)
+            self.source_type = "ai_generated"
+            source_note = f"{len(docs)} AI-generated topic segments (transcript unavailable)"
 
-        # Build docs and vectorstore
-        docs = self._chunks_from_transcript(raw)
         if not docs:
-            return "Error: Could not build chunks from transcript."
+            return "Error: Could not build any content chunks for this video."
 
         try:
             self._vs = build_vectorstore(docs)
@@ -466,17 +515,17 @@ class VideoRAGAgent:
 
         return (
             "Loaded: " + self.title
-            + " | " + str(len(raw)) + " segments"
+            + " | " + source_note
             + " | " + str(len(docs)) + " chunks indexed."
         )
 
     def is_ready(self) -> bool:
-        return self._vs is not None and len(self._chunks) > 0
+        return self._vs is not None
 
     def query(self, question: str) -> Dict:
         if not self.is_ready():
             return {
-                "answer": "Video not loaded. Please go to the Ingest tab, paste a YouTube URL, and click Load & Index Video.",
+                "answer": "Video not loaded. Please paste a YouTube URL and click Load.",
                 "timestamps": []
             }
         docs = self._vs.as_retriever(search_kwargs={"k": 5}).invoke(question)
@@ -488,15 +537,22 @@ class VideoRAGAgent:
             }
             for d in docs
         ]
+        source_note = (
+            "The context is from the real video transcript with timestamps."
+            if self.source_type == "transcript"
+            else "Note: No transcript was available — context is AI-generated from the video title/channel."
+        )
         answer = llm_call([HumanMessage(content=(
             "You are a helpful YouTube video assistant.\n"
-            "Answer using ONLY the transcript context below. Cite timestamps like [MM:SS] when relevant.\n"
+            + source_note + "\n"
+            "Answer using ONLY the context below. Cite timestamps like [MM:SS] when relevant.\n"
             "If the answer is not in the context, say so.\n\n"
             "Video: \"" + self.title + "\" by " + self.channel + "\n\n"
-            "Relevant transcript segments:\n" + context + "\n\n"
+            "Relevant segments:\n" + context + "\n\n"
             "Question: " + question + "\n\nAnswer:"
         ))])
-        return {"answer": answer, "timestamps": timestamps, "video_url": self.video_url}
+        return {"answer": answer, "timestamps": timestamps, "video_url": self.video_url,
+                "source_type": self.source_type}
 
     def summarize(self, style: str = "detailed") -> Dict:
         if not self._transcript:
@@ -508,10 +564,11 @@ class VideoRAGAgent:
         }.get(style, "Write a structured summary covering: Overview, Key Topics, Main Insights, Conclusion.")
         summary = llm_call([HumanMessage(content=(
             "Video: \"" + self.title + "\" by " + self.channel + "\n\n"
-            "Transcript:\n" + excerpt + "\n\n" + instr
+            "Content:\n" + excerpt + "\n\n" + instr
         ))], temperature=0.2)
         return {"summary": summary, "title": self.title, "channel": self.channel,
-                "video_url": self.video_url, "thumbnail": self.thumbnail}
+                "video_url": self.video_url, "thumbnail": self.thumbnail,
+                "source_type": self.source_type}
 
     def get_info(self) -> Dict:
         return {
@@ -523,12 +580,15 @@ class VideoRAGAgent:
             "thumbnail":           self.thumbnail,
             "transcript_segments": len(self._chunks),
             "indexed":             self._vs is not None,
+            "source_type":         self.source_type,
         }
 
     @staticmethod
     def is_youtube_url(text: str) -> bool:
         return bool(re.search(r"(youtube\.com|youtu\.be)", text, re.IGNORECASE))
 
+
+# ── DATA ANALYSIS AGENT ───────────────────────────────────────────────────────
 
 class DataAnalysisAgent:
     name = "Data Analysis Agent"
