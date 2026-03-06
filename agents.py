@@ -272,77 +272,122 @@ class VideoRAGAgent:
         self._chunks: List[Dict] = []
         self._transcript = ""
 
+    def _parse_seg(self, seg) -> tuple:
+        if isinstance(seg, dict):
+            return seg.get("start", 0), seg.get("duration", 0), seg.get("text", "").strip()
+        return getattr(seg, "start", 0), getattr(seg, "duration", 0), getattr(seg, "text", "").strip()
+
     def ingest(self, youtube_url: str, language: str = "en") -> str:
+        # Reset state completely
+        self._vs = None
+        self._chunks = []
+        self._transcript = ""
+
+        # Step 1 — extract video ID
         try:
             vid = _yt_id(youtube_url)
         except ValueError as e:
             return f"Error: {e}"
 
         self.video_id  = vid
-        self.video_url = f"https://www.youtube.com/watch?v={vid}"
-        self.thumbnail = f"https://img.youtube.com/vi/{vid}/hqdefault.jpg"
-        self.title     = f"YouTube Video ({vid})"
+        self.video_url = "https://www.youtube.com/watch?v=" + vid
+        self.thumbnail = "https://img.youtube.com/vi/" + vid + "/hqdefault.jpg"
+        self.title     = "YouTube Video (" + vid + ")"
         self.channel   = "Unknown"
         self.duration  = "Unknown"
 
+        # Step 2 — get title via oEmbed
         if REQUESTS_OK:
             try:
-                r = _req.get(f"https://www.youtube.com/oembed?url={self.video_url}&format=json", timeout=8)
+                r = _req.get(
+                    "https://www.youtube.com/oembed?url=" + self.video_url + "&format=json",
+                    timeout=8
+                )
                 if r.status_code == 200:
-                    d = r.json()
-                    self.title   = d.get("title", self.title)
-                    self.channel = d.get("author_name", "Unknown")
+                    meta = r.json()
+                    self.title   = meta.get("title", self.title)
+                    self.channel = meta.get("author_name", "Unknown")
             except Exception:
                 pass
 
+        # Step 3 — fetch transcript
         if not TRANSCRIPT_OK:
-            return "Error: Install youtube-transcript-api"
+            return "Error: youtube-transcript-api not installed."
+
+        raw_chunks = []
         try:
             tlist = YouTubeTranscriptApi.list_transcripts(vid)
-            t = None
-            for getter in [
+            transcript_obj = None
+            for attempt in [
                 lambda: tlist.find_manually_created_transcript([language]),
                 lambda: tlist.find_generated_transcript([language]),
-                lambda: list(tlist)[0] if list(tlist) else None,
+                lambda: tlist.find_manually_created_transcript(["en"]),
+                lambda: tlist.find_generated_transcript(["en"]),
             ]:
-                try: t = getter()
-                except Exception: pass
-                if t: break
-            if t is None: return "No transcript found for this video."
-            self._chunks = t.fetch()
-            def _seg_text(c): return getattr(c, "text", c.get("text","") if isinstance(c, dict) else "")
-            def _seg_start(c): return getattr(c, "start", c.get("start",0) if isinstance(c, dict) else 0)
-            lines = [f"[{_secs(_seg_start(c))}] {_seg_text(c)}" for c in self._chunks]
-            self._transcript = "\n".join(lines)
-        except TranscriptsDisabled:
-            return "Transcripts are disabled for this video."
-        except Exception as e:
-            return f"Transcript error: {e}"
+                try:
+                    transcript_obj = attempt()
+                    break
+                except Exception:
+                    continue
+            if transcript_obj is None:
+                all_t = list(tlist)
+                if all_t:
+                    transcript_obj = all_t[0]
+            if transcript_obj is None:
+                return "Error: No transcript available for this video."
 
-        docs, cur_text, cur_start, cur_end = [], [], None, 0.0
+            fetched = transcript_obj.fetch()
+            for seg in fetched:
+                s, d, txt = self._parse_seg(seg)
+                raw_chunks.append({"start": float(s), "duration": float(d), "text": str(txt)})
+
+        except TranscriptsDisabled:
+            return "Error: Transcripts disabled for this video."
+        except Exception as e:
+            return "Error fetching transcript: " + str(e)
+
+        if not raw_chunks:
+            return "Error: Transcript was empty."
+
+        self._chunks = raw_chunks
+
+        # Step 4 — build plain text transcript
+        parts = []
         for seg in self._chunks:
-            # Support both dict and object style (youtube-transcript-api changed in v0.6+)
-            if isinstance(seg, dict):
-                s = seg.get("start", 0); d = seg.get("duration", 0); txt = seg.get("text", "").strip()
-            else:
-                s = getattr(seg, "start", 0); d = getattr(seg, "duration", 0); txt = getattr(seg, "text", "").strip()
-            if cur_start is None: cur_start = s
-            cur_text.append(txt); cur_end = s + d
+            parts.append("[" + _secs(seg["start"]) + "] " + seg["text"])
+        self._transcript = "\n".join(parts)
+
+        # Step 5 — chunk into 60-second windows
+        docs = []
+        cur_text, cur_start, cur_end = [], None, 0.0
+        for seg in self._chunks:
+            s, d, txt = seg["start"], seg["duration"], seg["text"]
+            if cur_start is None:
+                cur_start = s
+            cur_text.append(txt)
+            cur_end = s + d
             if (cur_end - cur_start) >= 60:
                 docs.append(Document(
-                    page_content=f"[{_secs(cur_start)}] {' '.join(cur_text)}",
+                    page_content="[" + _secs(cur_start) + "] " + " ".join(cur_text),
                     metadata={"start_sec": cur_start, "timestamp": _secs(cur_start), "source": self.video_url}
                 ))
                 cur_text, cur_start = [], None
         if cur_text and cur_start is not None:
             docs.append(Document(
-                page_content=f"[{_secs(cur_start)}] {' '.join(cur_text)}",
+                page_content="[" + _secs(cur_start) + "] " + " ".join(cur_text),
                 metadata={"start_sec": cur_start, "timestamp": _secs(cur_start), "source": self.video_url}
             ))
-        if docs:
-            self._vs = build_vectorstore(docs)
 
-        return f"Loaded: {self.title} | {len(self._chunks)} segments indexed."
+        if not docs:
+            return "Error: Could not build document chunks from transcript."
+
+        # Step 6 — build vectorstore
+        try:
+            self._vs = build_vectorstore(docs)
+        except Exception as e:
+            return "Error building index: " + str(e)
+
+        return "Loaded: " + self.title + " | " + str(len(self._chunks)) + " segments | " + str(len(docs)) + " chunks indexed."
 
     def is_ready(self) -> bool:
         return self._vs is not None and len(self._chunks) > 0
