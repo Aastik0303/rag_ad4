@@ -178,8 +178,8 @@ pre { background:#060a12 !important; border:1px solid #1e3a5f !important; border
 
 # ── API Keys ──────────────────────────────────────────────────────────────────
 API_KEYS = [
-    
-    "AIzaSyBON-23gAbhsMXaJ4e2khLyhiN010vOQK4"
+    "YOUR_GEMINI_API_KEY_HERE",
+    # "AIzaSy...",   ← add more keys here
 ]
 
 
@@ -198,6 +198,8 @@ def init_session():
         "data_shape":     "",
         "data_columns":   [],
         "_boot_error":    "",
+        "video_url_saved":  "",
+        "video_lang_saved": "en",
     }.items():
         if k not in st.session_state:
             st.session_state[k] = v
@@ -384,6 +386,18 @@ if st.session_state._boot_error:
 orch   = st.session_state.orchestrator
 active = st.session_state.active_agent
 
+# ── Auto-restore video if agent lost state (e.g. Render sleep/wake) ──────────
+if (st.session_state.get("video_ingested")
+        and st.session_state.get("video_url_saved")
+        and not orch.video_rag.is_ready()):
+    try:
+        orch.video_rag.ingest(
+            st.session_state.video_url_saved,
+            language=st.session_state.get("video_lang_saved", "en")
+        )
+    except Exception:
+        pass  # silently fail, user will see the error when they query
+
 
 # ════════════════════════════════════════════════════════════
 # TABS
@@ -506,10 +520,15 @@ with tab_chat:
 
                 # YOUTUBE Q&A with timestamps
                 elif active == "video":
-                    r = orch.video_rag.query(user_input)
-                    push_msg("assistant", r.get("answer", ""),
-                             agent="🎬 YouTube RAG",
-                             timestamps=r.get("timestamps", []))
+                    if not orch.video_rag.is_ready():
+                        push_msg("assistant",
+                                 "Video not loaded. Go to the Ingest tab, paste a YouTube URL, and click Load & Index Video.",
+                                 agent="System")
+                    else:
+                        r = orch.video_rag.query(user_input)
+                        push_msg("assistant", r.get("answer", ""),
+                                 agent="🎬 YouTube RAG",
+                                 timestamps=r.get("timestamps", []))
 
                 # DATA ANALYSIS
                 elif active == "data":
@@ -689,8 +708,15 @@ with tab_ingest:
                 try:
                     msg  = orch.video_rag.ingest(yt_url, language=yt_lang)
                     info = orch.video_rag.get_info()
-                    st.session_state.video_ingested = True
-                    st.success(f"✅ {msg}")
+                    # Only mark as ready if ingest actually succeeded (no error prefix)
+                    if info.get("indexed") or (msg and not msg.lower().startswith("error")):
+                        st.session_state.video_ingested = True
+                        st.session_state.video_url_saved = yt_url
+                        st.session_state.video_lang_saved = yt_lang
+                        st.success(f"✅ {msg}")
+                    else:
+                        st.error(f"❌ {msg}")
+                        st.stop()
                     if info.get("title"):
                         st.markdown(f"""
 <div class="info-card">
