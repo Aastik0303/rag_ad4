@@ -134,7 +134,7 @@ class ApiKeyPool:
 
 key_pool = ApiKeyPool()
 
-DEFAULT_MODEL = "gemini-2.5-flash"
+DEFAULT_MODEL = "gemini-2.5-flash-preview-04-17"
 
 
 def get_llm(temperature=0.1):
@@ -233,7 +233,7 @@ class RAGAgent:
     def query(self, question: str) -> Dict:
         if self._vs is None:
             return {"answer": "No documents loaded yet. Please upload files first.", "sources": []}
-        docs = self._vs.as_retriever(search_kwargs={"k": 4}).get_relevant_documents(question)
+        docs = self._vs.as_retriever(search_kwargs={"k": 5}).invoke(question)
         if not docs:
             return {"answer": "No relevant content found.", "sources": []}
         context = "\n\n".join(d.page_content for d in docs)
@@ -310,7 +310,9 @@ class VideoRAGAgent:
                 if t: break
             if t is None: return "No transcript found for this video."
             self._chunks = t.fetch()
-            lines = [f"[{_secs(c['start'])}] {c['text']}" for c in self._chunks]
+            def _seg_text(c): return getattr(c, "text", c.get("text","") if isinstance(c, dict) else "")
+            def _seg_start(c): return getattr(c, "start", c.get("start",0) if isinstance(c, dict) else 0)
+            lines = [f"[{_secs(_seg_start(c))}] {_seg_text(c)}" for c in self._chunks]
             self._transcript = "\n".join(lines)
         except TranscriptsDisabled:
             return "Transcripts are disabled for this video."
@@ -319,7 +321,11 @@ class VideoRAGAgent:
 
         docs, cur_text, cur_start, cur_end = [], [], None, 0.0
         for seg in self._chunks:
-            s, d, txt = seg.get("start", 0), seg.get("duration", 0), seg.get("text", "").strip()
+            # Support both dict and object style (youtube-transcript-api changed in v0.6+)
+            if isinstance(seg, dict):
+                s = seg.get("start", 0); d = seg.get("duration", 0); txt = seg.get("text", "").strip()
+            else:
+                s = getattr(seg, "start", 0); d = getattr(seg, "duration", 0); txt = getattr(seg, "text", "").strip()
             if cur_start is None: cur_start = s
             cur_text.append(txt); cur_end = s + d
             if (cur_end - cur_start) >= 60:
@@ -341,7 +347,7 @@ class VideoRAGAgent:
     def query(self, question: str) -> Dict:
         if self._vs is None:
             return {"answer": "No video loaded. Please paste a YouTube URL in the Ingest tab first.", "timestamps": []}
-        docs = self._vs.as_retriever(search_kwargs={"k": 5}).get_relevant_documents(question)
+        docs = self._vs.as_retriever(search_kwargs={"k": 5}).invoke(question)
         context = "\n\n".join(d.page_content for d in docs)
         timestamps = [{"timestamp": d.metadata.get("timestamp", ""),
                        "yt_link": f"{self.video_url}&t={int(d.metadata.get('start_sec',0))}s"}
