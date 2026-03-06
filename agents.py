@@ -134,7 +134,7 @@ class ApiKeyPool:
 
 key_pool = ApiKeyPool()
 
-DEFAULT_MODEL = "gemini-2.5-flash"
+DEFAULT_MODEL = "gemini-2.5-flash-preview-04-17"
 
 
 def get_llm(temperature=0.1):
@@ -344,9 +344,12 @@ class VideoRAGAgent:
 
         return f"Loaded: {self.title} | {len(self._chunks)} segments indexed."
 
+    def is_ready(self) -> bool:
+        return self._vs is not None and len(self._chunks) > 0
+
     def query(self, question: str) -> Dict:
         if self._vs is None:
-            return {"answer": "No video loaded. Please paste a YouTube URL in the Ingest tab first.", "timestamps": []}
+            return {"answer": "⚠️ Video not indexed yet. Please go to the **Ingest** tab, paste a YouTube URL, and click **Load & Index Video** first.", "timestamps": []}
         docs = self._vs.as_retriever(search_kwargs={"k": 5}).invoke(question)
         context = "\n\n".join(d.page_content for d in docs)
         timestamps = [{"timestamp": d.metadata.get("timestamp", ""),
