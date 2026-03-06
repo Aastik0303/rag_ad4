@@ -233,7 +233,7 @@ class RAGAgent:
     def query(self, question: str) -> Dict:
         if self._vs is None:
             return {"answer": "No documents loaded yet. Please upload files first.", "sources": []}
-        docs = self._vs.as_retriever(search_kwargs={"k": 5}).get_relevant_documents(question)
+        docs = self._vs.as_retriever(search_kwargs={"k": 4}).get_relevant_documents(question)
         if not docs:
             return {"answer": "No relevant content found.", "sources": []}
         context = "\n\n".join(d.page_content for d in docs)
