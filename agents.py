@@ -12,6 +12,7 @@ from pathlib import Path
 from typing import Any, Dict, List, Optional
 from urllib.parse import urlparse, parse_qs
 
+
 import matplotlib
 matplotlib.use("Agg")
 import matplotlib.pyplot as plt
@@ -134,7 +135,7 @@ class ApiKeyPool:
 
 key_pool = ApiKeyPool()
 
-DEFAULT_MODEL = "gemini-2.5-flash-preview-04-17"
+DEFAULT_MODEL = "gemini-2.5-flash"
 
 
 def get_llm(temperature=0.1):
